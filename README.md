@@ -39,3 +39,17 @@ Key flags:
 
 This makes it easy to gate deployments on infrastructure risk.
 
+## Development
+
+To run tests and exercise the CLI against the bundled example plans on Windows (PowerShell):
+
+```powershell
+.\scripts\dev.ps1
+```
+
+This will:
+
+- Run `go test ./...`.
+- Run `tf-risk-report` against `testdata/plan_simple.json`.
+- Run `tf-risk-report` against `testdata/plan_high_risk.json` with `--fail-threshold=MEDIUM`.
+
