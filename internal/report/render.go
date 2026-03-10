@@ -4,79 +4,95 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/gwoff/terraform-change-risk-analyzer/internal/risk"
 )
 
-// Render writes a human-readable risk report to w.
-func Render(w io.Writer, changes []risk.ChangeRisk, summary risk.Summary, topN int) error {
+// RenderText writes a compact, terminal-friendly report to w based on an
+// aggregated Summary and recommendation.
+func RenderText(w io.Writer, summary Summary, recommendation string) error {
+	fmt.Fprintf(w, "tf-risk-report summary (Total: %d, Max severity: %s, Avg score: %.1f)\n",
+		summary.Counts.Total,
+		summary.Overall.MaxSeverity,
+		summary.Overall.AverageScore,
+	)
+
+	// Counts section.
+	fmt.Fprintln(w, "Actions:", formatCounts(summary.Counts.ByAction))
+	fmt.Fprintln(w, "Severities:", formatCounts(summary.Counts.BySeverity))
+
+	// Top risks table.
+	if len(summary.Top) == 0 {
+		fmt.Fprintln(w, "Top risks: none (no managed resource changes)")
+	} else {
+		fmt.Fprintln(w, "Top risks:")
+		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "SEVERITY\tSCORE\tACTION\tRESOURCE\tDETAIL")
+		for _, r := range summary.Top {
+			detail := r.PrimaryReason
+			if len(detail) > 80 {
+				detail = detail[:77] + "..."
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n",
+				r.Severity,
+				r.Score,
+				r.Action,
+				r.Address,
+				detail,
+			)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+
+	if recommendation != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, recommendation)
+	}
+
+	return nil
+}
+
+// Render is the legacy entrypoint used by the CLI. It adapts the risk package's
+// types into the reporting Summary and delegates to RenderText.
+func Render(w io.Writer, changes []risk.ChangeRisk, _ risk.Summary, topN int) error {
 	if topN <= 0 {
 		topN = len(changes)
 	}
 
-	fmt.Fprintf(w, "tf-risk-report\n\n")
-
-	fmt.Fprintf(w, "Summary:\n")
-	fmt.Fprintf(w, "  Total managed resources: %d\n", summary.TotalResources)
-	fmt.Fprintf(w, "  Highest risk level: %s\n", summary.MaxLevel.String())
-	fmt.Fprintf(w, "  Counts by level:\n")
-	for _, lvl := range []risk.Level{risk.LevelCritical, risk.LevelHigh, risk.LevelMedium, risk.LevelLow, risk.LevelNone} {
-		count := summary.ByLevel[lvl]
-		fmt.Fprintf(w, "    %-8s: %d\n", lvl.String(), count)
-	}
-	fmt.Fprintln(w)
-
-	if len(changes) == 0 {
-		fmt.Fprintln(w, "No managed resource changes detected.")
-		return nil
+	var rr []ResourceRisk
+	for _, c := range changes {
+		rr = append(rr, ResourceRisk{
+			Address:  c.Address,
+			Type:     c.ResourceType,
+			Action:   c.Action,
+			Score:    c.Score.Numeric,
+			Severity: strings.ToUpper(c.Score.Level.String()),
+			Reasons:  c.Score.Reasons,
+		})
 	}
 
-	sort.Slice(changes, func(i, j int) bool {
-		if changes[i].Score.Numeric == changes[j].Score.Numeric {
-			return changes[i].Address < changes[j].Address
-		}
-		return changes[i].Score.Numeric > changes[j].Score.Numeric
-	})
+	summary := BuildSummary(rr, topN)
+	recommendation := BuildRecommendation(summary)
+	return RenderText(w, summary, recommendation)
+}
 
-	if topN > len(changes) {
-		topN = len(changes)
+func formatCounts(m map[string]int) string {
+	if len(m) == 0 {
+		return "none"
 	}
-
-	fmt.Fprintf(w, "Top %d highest-risk changes:\n", topN)
-
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "LEVEL\tSCORE\tACTION\tRESOURCE\tDETAILS")
-
-	for i := 0; i < topN; i++ {
-		cr := changes[i]
-
-		var detail string
-		if len(cr.Score.Reasons) > 0 {
-			detail = cr.Score.Reasons[0]
-			if len(cr.Score.Reasons) > 1 {
-				remaining := len(cr.Score.Reasons) - 1
-				detail = fmt.Sprintf("%s (+%d more)", detail, remaining)
-			}
-		}
-
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n",
-			cr.Score.Level.String(),
-			cr.Score.Numeric,
-			cr.Action,
-			cr.Address,
-			detail,
-		)
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-
-	if err := tw.Flush(); err != nil {
-		return err
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, m[k]))
 	}
-
-	if topN < len(changes) {
-		fmt.Fprintf(w, "\nOnly showing top %d of %d changes.\n", topN, len(changes))
-	}
-
-	return nil
+	return strings.Join(parts, ", ")
 }
 
