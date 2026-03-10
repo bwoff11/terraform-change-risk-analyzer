@@ -1,0 +1,41 @@
+{
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.db",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "db",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "allocated_storage": 100,
+          "engine_version": "12.5"
+        },
+        "after": {
+          "allocated_storage": 200,
+          "engine_version": "13.0"
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "aws_security_group.web",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "cidr_blocks": ["10.0.0.0/8"]
+        },
+        "after": {
+          "cidr_blocks": ["10.0.0.0/8", "0.0.0.0/0"]
+        },
+        "after_unknown": {}
+      }
+    }
+  ]
+}
+
